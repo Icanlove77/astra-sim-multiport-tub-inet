@@ -15,6 +15,10 @@
 #include "ns3/internet-module.h"
 #include "ns3/network-module.h"
 
+// for the trace system
+#include "ns3/names.h"
+#include "ns3/node-list.h"
+
 #undef NS3_LOG_COMPAT_UNDEF_SYSLOG
 #include "astra-sim/network_frontend/ns3/ns3_log_monkey_patch.h"
 
@@ -241,6 +245,96 @@ void read_logical_topo_config(string network_configuration,
     queues_per_dim = vector<int>(logical_dims.size(), num_queues_per_dim);
 }
 
+static uint32_t GetNodeIdFromContext(const std::string& context) {
+    auto p = context.find("/NodeList/");
+    if (p == std::string::npos) return UINT32_MAX;
+    p += std::string("/NodeList/").size();
+    auto q = context.find("/", p);
+    return static_cast<uint32_t>(std::stoul(context.substr(p, q - p)));
+}
+
+static int32_t GetDevIdFromContext(const std::string& context) {
+    // context for example: /NodeList/3/DeviceList/1/$ns3::NetDevice/MacTx
+    auto p = context.find("/DeviceList/");
+    if (p == std::string::npos) return -1;
+    p += std::string("/DeviceList/").size();
+    auto q = context.find("/", p);
+    return static_cast<int32_t>(std::stol(context.substr(p, q - p)));
+}
+
+static std::string NodeNameFromContext(const std::string& context) {
+    uint32_t nodeId = GetNodeIdFromContext(context);
+    auto node = ns3::NodeList::GetNode(nodeId);
+    std::string name = ns3::Names::FindName(node);
+    if (name.empty()) name = "Node" + std::to_string(nodeId);
+    return name;
+}
+
+// log out a small number of packets to avoid flooding the output
+static bool ShouldLog(ns3::Ptr<const ns3::Packet> p) {
+    static uint32_t cnt = 0;
+    if (cnt++ < 200) return true;
+    return false;
+}
+
+static std::string PeerOf(uint32_t nodeId, uint32_t devId) {
+    auto node = ns3::NodeList::GetNode(nodeId);
+    if (!node || devId >= node->GetNDevices()) return "peer=?";
+
+    auto dev = node->GetDevice(devId);
+    auto ch = dev->GetChannel();
+    if (!ch) return "peer=?";
+
+    // find the other end of the channel, and find its node and device index on that
+    for (uint32_t i = 0; i < ch->GetNDevices(); ++i) {
+        auto other = ch->GetDevice(i);
+        if (other == dev) continue;
+
+        auto otherNode = other->GetNode();
+        std::string otherName = ns3::Names::FindName(otherNode);
+        if (otherName.empty()) otherName = "Node" + std::to_string(otherNode->GetId());
+
+        // find the device index of the other end on its node
+        uint32_t otherDevId = 0;
+        for (; otherDevId < otherNode->GetNDevices(); ++otherDevId) {
+            if (otherNode->GetDevice(otherDevId) == other) break;
+        }
+        return otherName + " dev=" + std::to_string(otherDevId);
+    }
+    return "peer=?";
+}
+
+static void DevTxTrace(std::string context, ns3::Ptr<const ns3::Packet> p)
+{
+    uint32_t nodeId = GetNodeIdFromContext(context);
+    int32_t devId_i = GetDevIdFromContext(context);
+    uint32_t devId = (devId_i < 0) ? 0u : static_cast<uint32_t>(devId_i);
+
+    std::cout << ns3::Simulator::Now().GetSeconds() << "s "
+              << "[DEV-TX] " << NodeNameFromContext(context)
+              << " dev=" << devId
+              << " -> " << PeerOf(nodeId, devId)
+              << " size=" << p->GetSize()
+              << " uid=" << p->GetUid()
+              << std::endl;
+}
+
+static void DevRxTrace(std::string context, ns3::Ptr<const ns3::Packet> p)
+{
+    uint32_t nodeId = GetNodeIdFromContext(context);
+    int32_t devId_i = GetDevIdFromContext(context);
+    uint32_t devId = (devId_i < 0) ? 0u : static_cast<uint32_t>(devId_i);
+
+    std::cout << ns3::Simulator::Now().GetSeconds() << "s "
+              << "[DEV-RX] " << NodeNameFromContext(context)
+              << " dev=" << devId
+              << " <- " << PeerOf(nodeId, devId)
+              << " size=" << p->GetSize()
+              << " uid=" << p->GetUid()
+              << std::endl;
+}
+
+
 // Read command line arguments.
 void parse_args(int argc, char* argv[]) {
     CommandLine cmd;
@@ -303,6 +397,21 @@ int main(int argc, char* argv[]) {
         std::cerr << "Fail to setup ns3 simulation." << std::endl;
         return -1;
     }
+    // name the devices
+    for (uint32_t id = 0; id < ns3::NodeList::GetNNodes(); ++id) {
+        auto node = ns3::NodeList::GetNode(id);
+        if (id < (uint32_t)num_npus) {
+            ns3::Names::Add("NPU" + std::to_string(id), node);
+        } else {
+            ns3::Names::Add("SW" + std::to_string(id - num_npus), node);
+        }
+    }
+
+    // connect trace callback to log packet transmission and reception at devices
+    ns3::Config::Connect("/NodeList/*/DeviceList/*/$ns3::NetDevice/MacTx",
+                         ns3::MakeCallback(&DevTxTrace));
+    ns3::Config::Connect("/NodeList/*/DeviceList/*/$ns3::NetDevice/MacRx",
+                         ns3::MakeCallback(&DevRxTrace));
 
     // Tell workload layer to schedule first events.
     for (int i = 0; i < num_npus; i++) {
