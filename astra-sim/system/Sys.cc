@@ -28,6 +28,7 @@ LICENSE file in the root directory of this source tree.
 #include "astra-sim/system/astraccl/native_collectives/collective_algorithm/DoubleBinaryTreeAllReduce.hh"
 #include "astra-sim/system/astraccl/native_collectives/collective_algorithm/HalvingDoubling.hh"
 #include "astra-sim/system/astraccl/native_collectives/collective_algorithm/Ring.hh"
+#include "astra-sim/system/astraccl/native_collectives/collective_algorithm/Trivance.hh"
 #include "astra-sim/system/scheduling/OfflineGreedy.hh"
 #include "astra-sim/system/astraccl/native_collectives/logical_topology/BasicLogicalTopology.hh"
 #include "astra-sim/system/astraccl/native_collectives/logical_topology/GeneralComplexTopology.hh"
@@ -994,6 +995,10 @@ CollectivePhase Sys::generate_collective_phase(
                            new HalvingDoubling(collective_type, id,
                                                (RingTopology*)topology,
                                                data_size));
+        return vn;
+    } else if(collective_impl->type == CollectiveImplType::Trivance) {
+        CollectivePhase vn(this, queue_id,
+                           new Trivance(collective_type, id, (RingTopology*)topology, data_size));
         return vn;
     } else if (collective_impl->type == CollectiveImplType::CustomCollectiveImpl) {
         string filename = ((CustomCollectiveImpl*)collective_impl)->filename;

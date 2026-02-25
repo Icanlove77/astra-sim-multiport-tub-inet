@@ -24,6 +24,7 @@ enum class CollectiveImplType {
     DoubleBinaryTree,
     HalvingDoubling,
     OneHalvingDoubling,
+    Trivance,
     CustomCollectiveImpl,
 };
 

@@ -41,6 +41,8 @@ namespace AstraSim {
             return new CollectiveImpl(CollectiveImplType::HalvingDoubling);
         } else if (collective_impl_str == "oneHalvingDoubling") {
             return new CollectiveImpl(CollectiveImplType::OneHalvingDoubling);
+        } else if (collective_impl_str == "Trivance") {
+            return new CollectiveImpl(CollectiveImplType::Trivance);
         } else {
             auto logger = LoggerFactory::get_logger("astraccl");
             logger->critical("Cannot interpret collective implementations. "
